@@ -142,32 +142,36 @@ class Node:
     def _flood_lsp(self, lsp_message: Message, incoming):
         """Propaga LSP a todos los vecinos (excepto el que nos lo envió)"""
         if lsp_message.msg_id in self.received_msgs:
-            return  # Ya procesamos este LSP
+            return  
             
         self.received_msgs.add(lsp_message.msg_id)
-        
-        # Procesar el LSP recibido
         lsp_data = lsp_message.payload
         sender_node = lsp_data["node"]
         
-        # Verificar si es más reciente que el que tenemos
-        if (sender_node not in self.lsp_database or 
-            lsp_data["sequence"] > self.lsp_database[sender_node]["sequence"]):
-            
+        # Verificar si es más reciente (incluyendo timestamp como desempate)
+        should_update = False
+        if sender_node not in self.lsp_database:
+            should_update = True
+        else:
+            existing = self.lsp_database[sender_node]
+            if (lsp_data["sequence"] > existing["sequence"] or 
+                (lsp_data["sequence"] == existing["sequence"] and 
+                lsp_data["timestamp"] > existing["timestamp"])):
+                should_update = True
+        
+        if should_update:
             print(f"[{self.name}] Recibido LSP de {sender_node}: {lsp_data['links']}")
             self.lsp_database[sender_node] = lsp_data
-            
-            # Reconstruir topología con nueva información
             self._rebuild_topology()
             
-            # Continuar flooding a otros vecinos
+            # Continuar flooding
             lsp_message.ttl -= 1
             if lsp_message.ttl > 0:
                 for neighbor in self.neighbors:
                     if neighbor.name != incoming:
                         print(f"[{self.name}] Propagando LSP → {neighbor.name}")
                         neighbor._flood_lsp(lsp_message, incoming=self.name)
-
+                        
     def _rebuild_topology(self):
         """Reconstruye la topología completa desde los LSPs"""
         self.topology_graph = {}
@@ -238,18 +242,21 @@ class Node:
 
     def receive_message(self, message: Message):
         """Recibe mensaje según el protocolo"""
-        if message.mtype == "lsp":
-            # Es un LSP, procesarlo
-            self._flood_lsp(message, incoming=message.from_node)
-        elif message.mtype == "message":
-            # Es un mensaje de datos
-            if self.mode == "lsr":
-                self._route_lsr(message)
-            elif self.mode == "flooding":
-                self._flood(message, incoming=message.from_node)
-            elif self.mode == "dijkstra":
-                self._route(message)
-
+        try:
+            if message.mtype == "lsp":
+                self._flood_lsp(message, incoming=message.from_node)
+            elif message.mtype == "message":
+                if self.mode == "lsr":
+                    self._route_lsr(message)
+                elif self.mode == "flooding":
+                    self._flood(message, incoming=message.from_node)
+                elif self.mode == "dijkstra":
+                    self._route(message)
+            else:
+                print(f"[{self.name}] Tipo de mensaje desconocido: {message.mtype}")
+        except Exception as e:
+            print(f"[{self.name}] Error procesando mensaje: {e}")
+            
     def send_message(self, message: Message):
         """Envía mensaje según el modo"""
         if self.mode == "flooding":
