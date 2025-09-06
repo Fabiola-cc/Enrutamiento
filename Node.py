@@ -1,6 +1,7 @@
 from MessageStruct import Message
 import heapq
 import time
+import asyncio
 
 class Node:
     def __init__(self, name, neighbors=None, mode="flooding", graph=None):
@@ -68,29 +69,41 @@ class Node:
                 neighbor._flood(msg_copy, incoming=self.name)
 
     def _route(self, message: Message):
-        if message.to_node == self.name:
+        # Reconstruir la ruta desde este nodo hasta el destino
+        path = []
+        current = message.to_node
+        while current is not None and current != self.name:
+            path.append(current)
+            current = self.prev.get(current)
+        if current is None:
+            print(f"[{self.name}] No hay ruta a {message.to_node}")
+            return
+
+        path.append(self.name)
+        path.reverse()  # ahora la ruta es self → … → destino
+
+        if len(path) == 1:
+            # Estoy solo, yo soy el destino
             print(f"[{self.name}] Recibí mensaje DESTINO: {message.payload}")
             return
 
-        # Construir ruta completa con backtracking
-        path = []
-        current = message.to_node
-        while current != self.name:
-            path.append(current)
-            if current not in self.prev:
-                print(f"[{self.name}] No hay ruta a {message.to_node}")
-                return
-            current = self.prev[current]
-        path.append(self.name)
-        path.reverse()  # ruta desde self hasta destino
+        # Si estoy en la última posición → destino final
+        if path[-1] == self.name:
+            print(f"[{self.name}] Recibí mensaje DESTINO: {message.payload}")
+            return
 
-        # El siguiente salto es el primer nodo después de este nodo
+        # Si no soy el último, calculo el siguiente salto
         next_hop_name = path[1]
-        next_hop = next(n for n in self.neighbors if n.name == next_hop_name)
+        next_hop = next((n for n in self.neighbors if n.name == next_hop_name), None)
+        if not next_hop:
+            print(f"[{self.name}] No encuentro vecino {next_hop_name} para reenviar a {message.to_node}")
+            return
 
         msg_copy = message.copy_for_forward(self.name, next_hop.name)
-        print(f"[{self.name}] ROUTE {message.to_node} → {next_hop.name} (ruta completa: {path})")
+        print(f"[{self.name}] ROUTE {message.to_node} → {next_hop.name} (ruta: {path})")
         next_hop._route(msg_copy)
+
+
 
     def _initialize_lsr(self):
         """Inicializa LSR: descubre vecinos y costos"""
@@ -274,6 +287,93 @@ class Node:
         if self.mode == "lsr":
             print(f"[{self.name}] Actualizando LSP...")
             self._create_and_flood_lsp()
+        
+    # Async Functions
+    
+    async def _flood_async(self, message: Message, incoming):
+        if message.ttl <= 0 or message.msg_id in self.received_msgs:
+            return
+        self.received_msgs.add(message.msg_id)
+
+        if message.to_node == self.name:
+            print(f"[{self.name}] (Async) Recibí mensaje DESTINO: {message.payload}")
+
+        message.ttl -= 1
+        tasks = []
+        for neighbor in self.neighbors:
+            if neighbor.name != incoming:
+                msg_copy = message.copy_for_forward(self.name, neighbor.name)
+                print(f"[{self.name}] (Async) FLOOD → {neighbor.name}")
+                tasks.append(neighbor._flood_async(msg_copy, incoming=self.name))
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    async def _route_async(self, message: Message):
+        # Reconstruir ruta
+        path = []
+        current = message.to_node
+        while current is not None and current != self.name:
+            path.append(current)
+            current = self.prev.get(current)
+        if current is None:
+            print(f"[{self.name}] (Async) No hay ruta a {message.to_node}")
+            return
+
+        path.append(self.name)
+        path.reverse()
+
+        if path[-1] == self.name:
+            print(f"[{self.name}] (Async) Recibí mensaje DESTINO: {message.payload}")
+            return
+
+        next_hop_name = path[1]
+        next_hop = next((n for n in self.neighbors if n.name == next_hop_name), None)
+        if not next_hop:
+            print(f"[{self.name}] (Async) No encuentro vecino {next_hop_name} para reenviar a {message.to_node}")
+            return
+
+        msg_copy = message.copy_for_forward(self.name, next_hop.name)
+        print(f"[{self.name}] (Async) ROUTE {message.to_node} → {next_hop.name} (ruta: {path})")
+        await next_hop._route_async(msg_copy)
+
+    async def _route_lsr_async(self, message: Message):
+        if message.to_node == self.name:
+            print(f"[{self.name}] (Async) RECIBÍ mensaje DESTINO: {message.payload}")
+            return
+
+        if message.to_node not in self.prev:
+            print(f"[{self.name}] (Async) No hay ruta a {message.to_node}")
+            return
+
+        # Construir ruta
+        path = []
+        current = message.to_node
+        while current != self.name:
+            path.append(current)
+            current = self.prev[current]
+            if current is None:
+                print(f"[{self.name}] (Async) Ruta incompleta a {message.to_node}")
+                return
+        path.append(self.name)
+        path.reverse()
+
+        next_hop_name = path[1]
+        next_hop = next(n for n in self.neighbors if n.name == next_hop_name)
+
+        msg_copy = message.copy_for_forward(self.name, next_hop.name)
+        print(f"[{self.name}] (Async) LSR ROUTE {message.to_node} → {next_hop.name} (ruta: {path})")
+        await next_hop._route_lsr_async(msg_copy)
+
+    async def send_message_async(self, message: Message):
+        if self.mode == "flooding":
+            print(f"[{self.name}] (Async) Enviando mensaje FLOOD: {message.payload}")
+            await self._flood_async(message, incoming=None)
+        elif self.mode == "dijkstra":
+            print(f"[{self.name}] (Async) Enviando mensaje DIJKSTRA: {message.payload}")
+            await self._route_async(message)
+        elif self.mode == "lsr":
+            print(f"[{self.name}] (Async) Enviando mensaje LSR: {message.payload}")
+            await self._route_lsr_async(message)
 
 
 # ---------------- Ejemplo de uso ----------------

@@ -20,14 +20,15 @@ class Message:
         return Message(**json.loads(data))
 
     # ------------------- nuevo -------------------
-    def copy_for_forward(self, from_node, to_node):
+    def copy_for_forward(self, from_node, _next_hop):
         return Message(
             proto=self.proto,
             mtype=self.mtype,
             from_node=from_node,
-            to_node=to_node,
+            to_node=self.to_node,    
             ttl=self.ttl,
             payload=self.payload,
             headers=self.headers.copy(),
             msg_id=self.msg_id
         )
+
