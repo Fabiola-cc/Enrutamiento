@@ -434,6 +434,197 @@ class Node:
             else:
                 print("Comando desconocido. Usa: send, mode, ping, exit")
 
+# ========== MÉTODOS DE CONFIGURACIÓN ==========    
+    def load_topology_config(self, filename):
+        """
+        Cargar topología desde archivo JSON
+        Formato esperado: {"type":"topo", "config": {"A": ["B", "C"], ...}}
+        """
+        try:
+            import json
+            import os
+            
+            if not os.path.exists(filename):
+                print(f"[{self.name}] ⚠️  Archivo de topología no encontrado: {filename}")
+                return False
+                
+            with open(filename, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+                
+            # Validar formato
+            if data.get("type") != "topo":
+                print(f"[{self.name}] ❌ Formato incorrecto en {filename}: type debe ser 'topo'")
+                return False
+                
+            if "config" not in data:
+                print(f"[{self.name}] ❌ Falta sección 'config' en {filename}")
+                return False
+                
+            topo_config = data["config"]
+            
+            # Verificar que mi nodo está en la configuración
+            if self.name not in topo_config:
+                print(f"[{self.name}] ❌ Mi nodo '{self.name}' no está en la topología")
+                return False
+                
+            # Obtener mis vecinos de la configuración
+            my_neighbors = topo_config[self.name]
+            print(f"[{self.name}] 📋 Topología cargada: mis vecinos son {my_neighbors}")
+            
+            # Actualizar lista de vecinos (nombres como strings)
+            self.neighbors = my_neighbors.copy()
+            
+            # Guardar información de topología completa (solo para referencia)
+            self.topology_config = topo_config
+            self.configured_neighbors = my_neighbors
+            
+            return True
+            
+        except json.JSONDecodeError as e:
+            print(f"[{self.name}] ❌ Error JSON en {filename}: {e}")
+            return False
+        except Exception as e:
+            print(f"[{self.name}] ❌ Error cargando topología: {e}")
+            return False
+
+    def load_names_config(self, filename):
+        """
+        Cargar mapeo de nombres desde archivo JSON
+        Formato esperado: {"type":"names", "config": {"A":"foo@bar.com", ...}}
+        """
+        try:
+            import json
+            import os
+            
+            if not os.path.exists(filename):
+                print(f"[{self.name}] ⚠️  Archivo de nombres no encontrado: {filename}")
+                return False
+                
+            with open(filename, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+                
+            # Validar formato
+            if data.get("type") != "names":
+                print(f"[{self.name}] ❌ Formato incorrecto en {filename}: type debe ser 'names'")
+                return False
+                
+            if "config" not in data:
+                print(f"[{self.name}] ❌ Falta sección 'config' en {filename}")
+                return False
+                
+            names_config = data["config"]
+            
+            # Verificar que mi nodo está en la configuración
+            if self.name not in names_config:
+                print(f"[{self.name}] ❌ Mi nodo '{self.name}' no está en el mapeo de nombres")
+                return False
+                
+            # Obtener mi ID/dirección
+            my_address = names_config[self.name]
+            print(f"[{self.name}] 🏷️  Mi dirección: {my_address}")
+            
+            # Guardar mapeo de nombres
+            self.names_config = names_config
+            self.my_address = my_address
+            
+            return True
+            
+        except json.JSONDecodeError as e:
+            print(f"[{self.name}] ❌ Error JSON en {filename}: {e}")
+            return False
+        except Exception as e:
+            print(f"[{self.name}] ❌ Error cargando nombres: {e}")
+            return False
+
+    async def configure_from_files(self, topo_file=None, names_file=None):
+        """
+        Configurar nodo usando archivos de configuración (versión async)
+        
+        Args:
+            topo_file (str): Ruta al archivo de topología (ej: "topo-test.txt")
+            names_file (str): Ruta al archivo de nombres (ej: "names-test.txt")
+        """
+        print(f"[{self.name}] 🔧 Configurando nodo desde archivos...")
+        
+        success = True
+        
+        # Cargar topología si se proporciona
+        if topo_file:
+            if self.load_topology_config(topo_file):
+                print(f"[{self.name}] ✅ Topología cargada correctamente")
+                # Actualizar neighbor_costs para LSR
+                if self.mode == "lsr":
+                    self.neighbor_costs.clear()
+                    for neighbor in self.neighbors:
+                        self.neighbor_costs[neighbor] = 1  # coste por defecto
+            else:
+                print(f"[{self.name}] ❌ Error cargando topología")
+                success = False
+        
+        # Cargar nombres si se proporciona  
+        if names_file:
+            if self.load_names_config(names_file):
+                print(f"[{self.name}] ✅ Nombres cargados correctamente")
+            else:
+                print(f"[{self.name}] ❌ Error cargando nombres")
+                success = False
+                
+        return success
+
+    def get_neighbor_address(self, neighbor_name):
+        """
+        Obtener la dirección de un vecino usando el mapeo de nombres
+        
+        Args:
+            neighbor_name (str): Nombre del vecino (ej: "B")
+            
+        Returns:
+            str: Dirección del vecino (ej: "nodeB@test.com") o None si no existe
+        """
+        if not hasattr(self, 'names_config'):
+            print(f"[{self.name}] ⚠️  No hay configuración de nombres cargada")
+            return None
+            
+        return self.names_config.get(neighbor_name)
+
+    def is_configured_neighbor(self, neighbor_name):
+        """
+        Verificar si un nodo es vecino según la configuración
+        
+        Args:
+            neighbor_name (str): Nombre del nodo a verificar
+            
+        Returns:
+            bool: True si es vecino configurado, False en caso contrario
+        """
+        if not hasattr(self, 'configured_neighbors'):
+            return False
+            
+        return neighbor_name in self.configured_neighbors
+
+    def print_configuration_status(self):
+        """Mostrar estado actual de la configuración"""
+        print(f"\n[{self.name}] 📊 ESTADO DE CONFIGURACIÓN:")
+        print(f"  └─ Nombre: {self.name}")
+        
+        if hasattr(self, 'my_address'):
+            print(f"  └─ Mi dirección: {self.my_address}")
+        else:
+            print(f"  └─ Mi dirección: No configurada")
+            
+        if hasattr(self, 'configured_neighbors'):
+            print(f"  └─ Vecinos configurados: {self.configured_neighbors}")
+        else:
+            print(f"  └─ Vecinos configurados: No cargados")
+            
+        if hasattr(self, 'neighbors') and self.neighbors:
+            print(f"  └─ Vecinos actuales: {self.neighbors}")
+        else:
+            print(f"  └─ Vecinos actuales: Ninguno")
+            
+        print(f"  └─ Modo actual: {self.mode}")
+        print()
+
 # ========== CLI PARA LANZAR UN NODO EN SU PROPIO PROCESO ==========
 if __name__ == "__main__":
     import sys

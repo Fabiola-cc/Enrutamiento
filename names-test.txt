@@ -1,0 +1,10 @@
+{
+  "type": "names",
+  "config": {
+    "A": "nodeA@test.com",
+    "B": "nodeB@test.com",
+    "C": "nodeC@test.com",
+    "D": "nodeD@test.com",
+    "E": "nodeE@test.com"
+  }
+}
