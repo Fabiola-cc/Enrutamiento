@@ -1,27 +1,27 @@
 {
   "type": "topo",
   "config": {
-    "A": [
-      "B",
-      "C",
-      "E"
+    "sec30.grupo7.A": [
+      "sec30.grupo7.B",
+      "sec30.grupo7.C",
+      "sec30.grupo7.E"
     ],
-    "B": [
-      "A",
-      "D"
+    "sec30.grupo7.B": [
+      "sec30.grupo7.A",
+      "sec30.grupo7.D"
     ],
-    "C": [
-      "A",
-      "D"
+    "sec30.grupo7.C": [
+      "sec30.grupo7.A",
+      "sec30.grupo7.D"
     ],
-    "D": [
-      "B",
-      "C"
+    "sec30.grupo7.D": [
+      "sec30.grupo7.B",
+      "sec30.grupo7.C"
     ],
-    "E": [
-      "B",
-      "C",
-      "A"
+    "sec30.grupo7.E": [
+      "sec30.grupo7.B",
+      "sec30.grupo7.C",
+      "sec30.grupo7.A"
     ]
   }
 }

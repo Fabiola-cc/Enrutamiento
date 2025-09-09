@@ -20,7 +20,7 @@ class NetworkSimulator:
         
     def load_configuration(self, topo_file="topo-test.txt", names_file="names-test.txt"):
         """Cargar configuración completa de la red"""
-        print("🔧 Cargando configuración de la red...")
+        print(" Cargando configuración de la red...")
         
         # Cargar topología
         try:
@@ -46,7 +46,7 @@ class NetworkSimulator:
     
     async def create_all_nodes(self, mode="lsr"):
         """Crear todos los nodos automáticamente"""
-        print(f"\n🚀 Creando nodos en modo '{mode}'...")
+        print(f"\n Creando nodos en modo '{mode}'...")
         
         for node_name in self.topology.keys():
             # Crear nodo
@@ -163,19 +163,19 @@ class NetworkSimulator:
         print("="*60)
         
         print(f"Nodos activos: {len(self.nodes)}")
-        print(f"🔗 Topología:")
+        print(f" Topología:")
         for node_name, neighbors in self.topology.items():
             status = "🟢" if node_name in self.nodes else "🔴"
             print(f"   {status} {node_name}: {neighbors}")
             
-        print(f"\n📍 Direcciones:")
+        print(f"\n Direcciones:")
         for node_name, address in self.names.items():
             status = "🟢" if node_name in self.nodes else "🔴"
             print(f"   {status} {node_name}: {address}")
             
         print(f"\n  Modos de enrutamiento:")
         for node_name, node in self.nodes.items():
-            print(f"   🔧 {node_name}: {node.mode}")
+            print(f"  {node_name}: {node.mode}")
             
         # NUEVO: Mostrar estado de tablas de enrutamiento
         print(f"\n  Estado de tablas de enrutamiento:")
@@ -230,7 +230,6 @@ class NetworkSimulator:
                     self.print_network_status()
                     
                 elif cmd == "topology":
-                    print("\n  TOPOLOGÍA VISUAL:")
                     self.print_topology_visual()
                     
                 elif cmd == "refresh":
