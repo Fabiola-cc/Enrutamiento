@@ -369,6 +369,70 @@ class Node:
         self._initialize_lsr()
         await self.create_and_flood_lsp()
 
+    async def console_input(self):
+        """Interfaz de usuario en consola para enviar mensajes y cambiar modos"""
+        loop = asyncio.get_event_loop()
+        while True:
+            user_input = await loop.run_in_executor(None, input, f"[{self.name}] > ")
+            parts = user_input.strip().split(" ", 2)
+
+            if not parts:
+                continue
+            cmd = parts[0].lower()
+
+            # --------- SALIR ---------
+            if cmd == "exit":
+                print(f"[{self.name}] Terminando...")
+                break
+
+            # --------- CAMBIO DE MODO ---------
+            elif cmd == "mode":
+                if len(parts) < 2:
+                    print("Uso: mode <flooding|lsr|dijkstra>")
+                    continue
+                new_mode = parts[1].lower()
+                if new_mode not in ("flooding", "lsr", "dijkstra"):
+                    print("Modo inválido. Usa flooding, lsr o dijkstra.")
+                    continue
+                self.mode = new_mode
+                print(f"[{self.name}] Modo cambiado a {new_mode}")
+                if new_mode == "lsr":
+                    await self.initialize_lsr_and_flood()
+
+            # --------- ENVÍO DE MENSAJES ---------
+            elif cmd == "send":
+                if len(parts) < 3:
+                    print("Uso: send <destino> <mensaje>")
+                    continue
+                to_node, payload = parts[1], parts[2]
+                msg = Message(
+                    proto=self.mode,
+                    mtype="message",
+                    from_node=self.name,
+                    to_node=to_node,
+                    ttl=10,
+                    payload=payload
+                )
+                await self.send_message(msg)
+
+            # --------- PING / HELLO ---------
+            elif cmd == "ping":
+                if len(parts) < 2:
+                    print("Uso: ping <destino>")
+                    continue
+                to_node = parts[1]
+                msg = Message(
+                    proto=self.mode,
+                    mtype="message",
+                    from_node=self.name,
+                    to_node=to_node,
+                    ttl=5,
+                    payload="PING"
+                )
+                await self.send_message(msg)
+
+            else:
+                print("Comando desconocido. Usa: send, mode, ping, exit")
 
 # ========== CLI PARA LANZAR UN NODO EN SU PROPIO PROCESO ==========
 if __name__ == "__main__":
@@ -387,7 +451,13 @@ if __name__ == "__main__":
     print(f"[{name}] Vecinos configurados: {neighbors}")
     print(f"[{name}] Modo: {node.mode}")
 
-    try:
-        asyncio.run(node.start())
-    except KeyboardInterrupt:
-        print(f"\n[{name}] Terminando...")
+    async def main():
+        try:
+            await asyncio.gather(
+                node.start(),        # escucha en Redis
+                node.console_input()  # interfaz de envío
+            )
+        except KeyboardInterrupt:
+            print(f"\n[{name}] Terminando...")
+
+    asyncio.run(main())
