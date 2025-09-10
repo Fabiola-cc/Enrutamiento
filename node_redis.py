@@ -315,9 +315,27 @@ class Node:
         """Procesa mensaje entrante y lo despacha al algoritmo correspondiente (async)."""
         print(f"[{self.name}]  Recibido de {message.from_node}: {message.mtype} - {message.payload}")
 
+        # --- MANEJO DE PING / PONG ---
+        if message.mtype == "ping":
+            # Responder automáticamente con pong
+            pong_msg = Message(
+                proto="control",   # no va por algoritmo
+                mtype="pong",
+                from_node=self.name,
+                to_node=message.from_node,
+                ttl=1,
+                payload={"timestamp": message.payload["timestamp"]}
+            )
+            await self.publish(pong_msg)
+            return
+
+        elif message.mtype == "pong":
+            # solo se maneja en send_ping, no necesita algoritmo
+            return
+
+        # --- MENSAJES NORMALES ---
         try:
             if message.mtype == "lsp":
-                # LSP flooding tiene su propia lógica (async)
                 await self.receive_lsp(message, from_neighbor=message.from_node)
             elif message.mtype == "message":
                 if self.mode == "lsr":
@@ -332,6 +350,7 @@ class Node:
                 print(f"[{self.name}]  Tipo de mensaje desconocido: {message.mtype}")
         except Exception as e:
             print(f"[{self.name}]  Error procesando mensaje: {e}")
+
 
     # ========== INTERFACE PÚBLICA ==========
     async def send_message(self, message: Message):
@@ -350,6 +369,51 @@ class Node:
             await self._route_lsr(message)
         else:
             print(f"[{self.name}]  Modo desconocido: {self.mode}")
+
+    async def send_ping(self, to_node: str, timeout: float = 2.0):
+        timestamp = time.time()
+        ping_msg = Message(
+            proto=self.mode,
+            mtype="ping",
+            from_node=self.name,
+            to_node=to_node,
+            ttl=1,
+            payload={"timestamp": timestamp}
+        )
+
+        # Crear future para esperar pong
+        fut = asyncio.get_event_loop().create_future()
+
+        async def pong_listener(msg: Message):
+            if msg.mtype == "pong" and msg.from_node == to_node and msg.to_node == self.name:
+                rtt = time.time() - msg.payload["timestamp"]
+                print(f"[{self.name}] Ping {self.name} → {to_node}: {rtt:.3f} s")
+                if not fut.done():
+                    fut.set_result(True)
+
+        # Suscribirse temporalmente a nuestro canal para escuchar pong
+        async with self.r.pubsub() as pubsub:
+            await pubsub.subscribe(f"nodo:{self.name}")
+            await self.publish(ping_msg)  # enviar ping
+            start = time.time()
+            while True:
+                raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                if raw:
+                    data = raw["data"]
+                    if isinstance(data, str):
+                        msg_obj = Message.from_json(data)
+                    else:
+                        msg_obj = Message.from_json(data.decode() if isinstance(data, bytes) else str(data))
+                    await pong_listener(msg_obj)
+                if fut.done():
+                    break
+                if time.time() - start > timeout:
+                    if not fut.done():
+                        print(f"[{self.name}] Ping {self.name} → {to_node}: TIMEOUT")
+                        fut.set_result(False)
+                    break
+                await asyncio.sleep(0.05)
+
 
     async def trigger_lsp_update(self):
         """Fuerza creación y flood de LSP (async)."""
@@ -421,15 +485,57 @@ class Node:
                     print("Uso: ping <destino>")
                     continue
                 to_node = parts[1]
-                msg = Message(
-                    proto=self.mode,
-                    mtype="message",
-                    from_node=self.name,
+                from_node = self.name
+
+                # Crear mensaje ping con timestamp
+                timestamp = time.time()
+                ping_msg = Message(
+                    proto="control",
+                    mtype="ping",
+                    from_node=from_node,
                     to_node=to_node,
-                    ttl=5,
-                    payload="PING"
+                    ttl=1,
+                    payload={"timestamp": timestamp}
                 )
-                await self.send_message(msg)
+
+                # === wait_for_pong aquí ===
+                async def wait_for_pong():
+                    fut = asyncio.get_event_loop().create_future()
+
+                    async def pong_listener(msg: Message):
+                        if msg.mtype == "pong" and msg.from_node == to_node and msg.to_node == from_node:
+                            rtt = time.time() - msg.payload["timestamp"]
+                            print(f"Ping {from_node} → {to_node}: {rtt:.3f} s")
+                            if not fut.done():
+                                fut.set_result(True)
+
+                    async with self.nodes[from_node].r.pubsub() as pubsub:
+                        await pubsub.subscribe(f"nodo:{from_node}")
+                        try:
+                            start = time.time()
+                            while True:
+                                raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                                if raw:
+                                    data = raw["data"]
+                                    if isinstance(data, str):
+                                        msg_obj = Message.from_json(data)
+                                    else:
+                                        msg_obj = Message.from_json(data.decode() if isinstance(data, bytes) else str(data))
+                                    await pong_listener(msg_obj)
+                                if time.time() - start > 2:
+                                    if not fut.done():
+                                        print(f"Ping {from_node} → {to_node}: TIMEOUT")
+                                        fut.set_result(False)
+                                    break
+                                await asyncio.sleep(0.05)
+                        except Exception as e:
+                            print(f"Error esperando pong: {e}")
+                    await fut
+
+                # Enviar ping y esperar pong
+                await self.nodes[from_node].send_message(ping_msg)
+                await wait_for_pong()
+
 
             else:
                 print("Comando desconocido. Usa: send, mode, ping, exit")
@@ -445,7 +551,7 @@ class Node:
             import os
             
             if not os.path.exists(filename):
-                print(f"[{self.name}] ⚠️  Archivo de topología no encontrado: {filename}")
+                print(f"[{self.name}]   Archivo de topología no encontrado: {filename}")
                 return False
                 
             with open(filename, 'r', encoding='utf-8') as file:
@@ -453,23 +559,23 @@ class Node:
                 
             # Validar formato
             if data.get("type") != "topo":
-                print(f"[{self.name}] ❌ Formato incorrecto en {filename}: type debe ser 'topo'")
+                print(f"[{self.name}]  Formato incorrecto en {filename}: type debe ser 'topo'")
                 return False
                 
             if "config" not in data:
-                print(f"[{self.name}] ❌ Falta sección 'config' en {filename}")
+                print(f"[{self.name}]  Falta sección 'config' en {filename}")
                 return False
                 
             topo_config = data["config"]
             
             # Verificar que mi nodo está en la configuración
             if self.name not in topo_config:
-                print(f"[{self.name}] ❌ Mi nodo '{self.name}' no está en la topología")
+                print(f"[{self.name}]  Mi nodo '{self.name}' no está en la topología")
                 return False
                 
             # Obtener mis vecinos de la configuración
             my_neighbors = topo_config[self.name]
-            print(f"[{self.name}] 📋 Topología cargada: mis vecinos son {my_neighbors}")
+            print(f"[{self.name}]  Topología cargada: mis vecinos son {my_neighbors}")
             
             # Actualizar lista de vecinos (nombres como strings)
             self.neighbors = my_neighbors.copy()
@@ -481,10 +587,10 @@ class Node:
             return True
             
         except json.JSONDecodeError as e:
-            print(f"[{self.name}] ❌ Error JSON en {filename}: {e}")
+            print(f"[{self.name}]  Error JSON en {filename}: {e}")
             return False
         except Exception as e:
-            print(f"[{self.name}] ❌ Error cargando topología: {e}")
+            print(f"[{self.name}]  Error cargando topología: {e}")
             return False
 
     def load_names_config(self, filename):
@@ -497,7 +603,7 @@ class Node:
             import os
             
             if not os.path.exists(filename):
-                print(f"[{self.name}] ⚠️  Archivo de nombres no encontrado: {filename}")
+                print(f"[{self.name}]   Archivo de nombres no encontrado: {filename}")
                 return False
                 
             with open(filename, 'r', encoding='utf-8') as file:
@@ -505,18 +611,18 @@ class Node:
                 
             # Validar formato
             if data.get("type") != "names":
-                print(f"[{self.name}] ❌ Formato incorrecto en {filename}: type debe ser 'names'")
+                print(f"[{self.name}]  Formato incorrecto en {filename}: type debe ser 'names'")
                 return False
                 
             if "config" not in data:
-                print(f"[{self.name}] ❌ Falta sección 'config' en {filename}")
+                print(f"[{self.name}]  Falta sección 'config' en {filename}")
                 return False
                 
             names_config = data["config"]
             
             # Verificar que mi nodo está en la configuración
             if self.name not in names_config:
-                print(f"[{self.name}] ❌ Mi nodo '{self.name}' no está en el mapeo de nombres")
+                print(f"[{self.name}]  Mi nodo '{self.name}' no está en el mapeo de nombres")
                 return False
                 
             # Obtener mi ID/dirección
@@ -530,10 +636,10 @@ class Node:
             return True
             
         except json.JSONDecodeError as e:
-            print(f"[{self.name}] ❌ Error JSON en {filename}: {e}")
+            print(f"[{self.name}]  Error JSON en {filename}: {e}")
             return False
         except Exception as e:
-            print(f"[{self.name}] ❌ Error cargando nombres: {e}")
+            print(f"[{self.name}]  Error cargando nombres: {e}")
             return False
 
     async def configure_from_files(self, topo_file=None, names_file=None):
@@ -544,29 +650,29 @@ class Node:
             topo_file (str): Ruta al archivo de topología (ej: "topo-test.txt")
             names_file (str): Ruta al archivo de nombres (ej: "names-test.txt")
         """
-        print(f"[{self.name}] 🔧 Configurando nodo desde archivos...")
+        print(f"[{self.name}]  Configurando nodo desde archivos...")
         
         success = True
         
         # Cargar topología si se proporciona
         if topo_file:
             if self.load_topology_config(topo_file):
-                print(f"[{self.name}] ✅ Topología cargada correctamente")
+                print(f"[{self.name}]  Topología cargada correctamente")
                 # Actualizar neighbor_costs para LSR
                 if self.mode == "lsr":
                     self.neighbor_costs.clear()
                     for neighbor in self.neighbors:
                         self.neighbor_costs[neighbor] = 1  # coste por defecto
             else:
-                print(f"[{self.name}] ❌ Error cargando topología")
+                print(f"[{self.name}]  Error cargando topología")
                 success = False
         
         # Cargar nombres si se proporciona  
         if names_file:
             if self.load_names_config(names_file):
-                print(f"[{self.name}] ✅ Nombres cargados correctamente")
+                print(f"[{self.name}]  Nombres cargados correctamente")
             else:
-                print(f"[{self.name}] ❌ Error cargando nombres")
+                print(f"[{self.name}]  Error cargando nombres")
                 success = False
                 
         return success
@@ -582,7 +688,7 @@ class Node:
             str: Dirección del vecino (ej: "nodeB@test.com") o None si no existe
         """
         if not hasattr(self, 'names_config'):
-            print(f"[{self.name}] ⚠️  No hay configuración de nombres cargada")
+            print(f"[{self.name}]   No hay configuración de nombres cargada")
             return None
             
         return self.names_config.get(neighbor_name)
@@ -624,6 +730,8 @@ class Node:
             
         print(f"  └─ Modo actual: {self.mode}")
         print()
+
+    
 
 # ========== CLI PARA LANZAR UN NODO EN SU PROPIO PROCESO ==========
 if __name__ == "__main__":

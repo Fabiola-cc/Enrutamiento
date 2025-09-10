@@ -200,6 +200,8 @@ class NetworkSimulator:
         print("  topology                          - Ver topología")
         print("  mode <nodo> <algoritmo>           - Cambiar algoritmo de un nodo")
         print("  refresh                           - Reinicializar LSR")
+        print("  ping <origen> <destino>           - Mandar un ping")
+        print("  hello <origen> <destino>           - Mandar un hello")
         print("  exit                              - Salir")
         print()
         
@@ -250,6 +252,18 @@ class NetworkSimulator:
                             await self.nodes[node_name].initialize_lsr_and_flood()
                     else:
                         print(f" Nodo '{node_name}' no existe")
+                
+                elif cmd == "ping":
+                    if len(parts) < 3:
+                        print(" Uso: ping <origen> <destino>")
+                        continue
+                    from_node = parts[1]
+                    to_node = parts[2]
+
+                    if from_node not in self.nodes:
+                        print(f" Nodo origen '{from_node}' no existe")
+                        continue
+                    await self.nodes[from_node].send_ping(to_node)
                         
                 else:
                     print(" Comando desconocido. Usa: send, status, topology, mode, refresh, exit")
