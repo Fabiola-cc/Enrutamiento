@@ -12,31 +12,42 @@ class Node:
     def __init__(
         self,
         name: str,
-        neighbors: Optional[List[str]] = None,
+        neighbors: Optional[Dict[str, int]] = None,  # ahora dict vecino:coste
         mode: str = "flooding",
         graph: Optional[Dict[str, Dict[str, int]]] = None,
-        host: str = "localhost",
-        port: int = 6379,
-        password: Optional[str] = None
+        host: str = "homelab.fortiguate.com",
+        port: int = 16379,
+        password: Optional[str] = "4YNydkHFPcayvlx7$zpKm"
     ):
         self.name = name
-        self.neighbors = neighbors or []        # lista de nombres de vecinos (strings)
-        self.received_msgs = set()              # IDs de mensajes ya recibidos
 
-        self.mode = mode                        # "flooding" | "dijkstra" | "lsr"
-        self.graph = graph or {}                # topología completa para Dijkstra (si aplica)
-        self.prev = {}                          # prev para backtracking (dijkstra)
-        self.lsp_database: Dict[str, dict] = {} # LSPs conocidos
+        # vecinos directos con costos
+        self.neighbor_costs: Dict[str, int] = neighbors or {}
+        self.neighbors = list(self.neighbor_costs.keys())  # lista de nombres de vecinos
+
+        # para control de flooding
+        self.received_msgs = set()              
+
+        # modo de enrutamiento
+        self.mode = mode                        
+        self.graph = graph or {}                # topología completa (solo si usas Dijkstra global)
+        self.prev = {}                          # prev para backtracking (Dijkstra)
+        self.lsp_database: Dict[str, dict] = {} # base de datos de LSPs conocidos
         self.sequence_number = 0
-        self.neighbor_costs: Dict[str,int] = {} # coste a vecinos directos
-        self.topology_graph: Dict[str, Dict[str,int]] = {}
+        self.topology_graph: Dict[str, Dict[str, int]] = {}  # grafo reconstruido en LSR
 
         # Cliente Redis (async)
-        self.r = redis.Redis(host=host, port=port, password=password, decode_responses=True)
+        self.r = redis.Redis(
+            host=host, 
+            port=port, 
+            password=password, 
+            decode_responses=True
+        )
 
         # Solo inicializar Dijkstra automáticamente si tiene grafo
         if self.mode == "dijkstra" and self.graph:
             self._dijkstra()
+
 
     # ========== DIJKSTRA (local sobre `graph`) ==========
     def _dijkstra(self):
@@ -730,6 +741,15 @@ class Node:
             
         print(f"  └─ Modo actual: {self.mode}")
         print()
+        
+    async def periodic_lsp_updates(self, interval: int = 20):
+        """Envia LSPs periódicamente cada `interval` segundos"""
+        if self.mode != "lsr":
+            return
+        while True:
+            await asyncio.sleep(interval)
+            print(f"[{self.name}] ⏳ Refrescando LSP (update periódico)")
+            await self.create_and_flood_lsp()
 
     
 
@@ -737,15 +757,25 @@ class Node:
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("Uso: python node_redis.py <NAME> [neighbor1 neighbor2 ...]")
+        print("Uso: python node_redis.py <NAME> [vecino:coste ...]")
         sys.exit(1)
 
     name = sys.argv[1]
-    neighbors = sys.argv[2:]
-    
-    # Crear nodo
-    node = Node(name, neighbors, mode="flooding")  # modo por defecto
-    
+    raw_neighbors = sys.argv[2:]
+
+    # Parseo de vecinos y costos
+    neighbors = {}
+    for entry in raw_neighbors:
+        if ":" in entry:
+            neigh, cost = entry.split(":")
+            neighbors[neigh] = int(cost)
+        else:
+            neighbors[entry] = 1  # costo por defecto
+
+    # Crear nodo (modo LSR por defecto)
+    node = Node(name, neighbors, mode="lsr")
+    node.neighbor_costs = neighbors  # asignar costos directamente
+
     print(f"[{name}] Iniciando nodo con Redis Async...")
     print(f"[{name}] Vecinos configurados: {neighbors}")
     print(f"[{name}] Modo: {node.mode}")
@@ -753,8 +783,10 @@ if __name__ == "__main__":
     async def main():
         try:
             await asyncio.gather(
-                node.start(),        # escucha en Redis
-                node.console_input()  # interfaz de envío
+                node.start(),
+                node.initialize_lsr_and_flood(),
+                node.periodic_lsp_updates(20),  
+                node.console_input()
             )
         except KeyboardInterrupt:
             print(f"\n[{name}] Terminando...")

@@ -2,9 +2,7 @@
   "type": "names",
   "config": {
     "sec30.grupo7.A": "nodeA@test.com",
-    "sec30.grupo7.B": "nodeB@test.com",
-    "sec30.grupo7.C": "nodeC@test.com",
-    "sec30.grupo7.D": "nodeD@test.com",
-    "sec30.grupo7.E": "nodeE@test.com"
+    "sec30.grupo10.B": "nodeB@test.com"
   }
 }
+
