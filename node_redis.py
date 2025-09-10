@@ -167,12 +167,10 @@ class Node:
         }
         self.lsp_database[self.name] = lsp
 
-        print(f"[{self.name}]  Creando LSP: {lsp}")
-
         # Crear mensaje LSP
         lsp_message = Message(
             proto="lsr",
-            mtype="lsp",
+            type="lsp",
             from_node=self.name,
             to_node="broadcast",   # semántica interna
             ttl=10,
@@ -181,9 +179,7 @@ class Node:
         )
 
         # Flooding directo a vecinos (como en Node.py)
-        print(f"[{self.name}]  Iniciando flooding a {len(self.neighbors)} vecinos...")
         for neighbor in self.neighbors:
-            print(f"[{self.name}]  Enviando LSP → {neighbor}")
             # En Redis, publicamos directamente al canal del vecino
             await self.publish_lsp_to_neighbor(lsp_message, neighbor)
         
@@ -240,7 +236,6 @@ class Node:
         self.topology_graph = {}
         for node_name, lsp in self.lsp_database.items():
             self.topology_graph[node_name] = lsp["links"].copy()
-        print(f"[{self.name}]  Topología reconstruida: {self.topology_graph}")
         if self.topology_graph:
             self._dijkstra_lsr()
 
@@ -266,7 +261,6 @@ class Node:
                     prev[v] = u
                     heapq.heappush(pq, (dist[v], v))
         self.prev = prev
-        print(f"[{self.name}]  LSR - Rutas calculadas: {self.prev}")
 
     async def _route_lsr(self, message: Message):
         """Enrutamiento usando tabla resultante de LSR (async)."""
@@ -331,7 +325,7 @@ class Node:
             # Responder automáticamente con pong
             pong_msg = Message(
                 proto="control",   # no va por algoritmo
-                mtype="pong",
+                type="pong",
                 from_node=self.name,
                 to_node=message.from_node,
                 ttl=1,
@@ -385,7 +379,7 @@ class Node:
         timestamp = time.time()
         ping_msg = Message(
             proto=self.mode,
-            mtype="ping",
+            type="ping",
             from_node=self.name,
             to_node=to_node,
             ttl=1,
@@ -482,7 +476,7 @@ class Node:
                 to_node, payload = parts[1], parts[2]
                 msg = Message(
                     proto=self.mode,
-                    mtype="message",
+                    type="message",
                     from_node=self.name,
                     to_node=to_node,
                     ttl=10,
@@ -502,7 +496,7 @@ class Node:
                 timestamp = time.time()
                 ping_msg = Message(
                     proto="control",
-                    mtype="ping",
+                    type="ping",
                     from_node=from_node,
                     to_node=to_node,
                     ttl=1,
@@ -748,7 +742,6 @@ class Node:
             return
         while True:
             await asyncio.sleep(interval)
-            print(f"[{self.name}] ⏳ Refrescando LSP (update periódico)")
             await self.create_and_flood_lsp()
 
     
