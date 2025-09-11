@@ -66,9 +66,6 @@ class Node:
                 await pubsub.subscribe(f"nodo:{neighbor}")
                 print(f"[{self.name}] Suscrito a nodo:{neighbor}")
 
-            # Mandar messages con pesos a nuestros vecinos
-            await self.send_messages()
-
             while True:
                 # get_message con timeout corto evita bloqueo indefinido
                 raw = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
@@ -180,7 +177,7 @@ class Node:
                 previous_weight = self.topology_table[msg.to_node][msg.from_node]["weight"]
                 previous_time = self.topology_table[msg.to_node][msg.from_node]["time"]
 
-                if(previous_weight!=msg.hops and previous_time != 15): # Cambiar y Mandar solamente información nueva
+                if(previous_weight!=msg.hops): # Cambiar y Mandar solamente información nueva
                     self.topology_table[msg.to_node][msg.from_node]["weight"] = msg.hops # update from propagation
                     self.topology_table[msg.to_node][msg.from_node]["time"] = 15 # RESET TIMER
                     print(f"Message recibido de {msg.from_node} para {msg.to_node}") #DEBUG
@@ -194,28 +191,27 @@ class Node:
 
     async def update_neighbors(self, interval: int = 3):
         """Envia HELLOs periódicamente cada 3 segundos"""
-        print("ENVIE HELLO")#DEBUG
         while True:
             await asyncio.sleep(interval)
-            for neighbor in self.neighbors:
+            # Mandar messages con pesos a nuestros vecinos
+            for neighbor in self.neighbors: # crea un mensaje por vecino
                 msg = Message(
+                    type="message",
+                    from_node=self.name,
+                    to_node=neighbor,
+                    hops=node.neighbor_costs.get(neighbor)
+                )
+                await self._flood(msg) # manda cada mensaje a todos los vecinos
+
+                hello_msg = Message(
                     type="hello",
                     from_node=self.name,
                     to_node=neighbor,
                     hops=node.neighbor_costs.get(neighbor)
                 )
-                await self.publish(msg)
-
-    async def send_messages(self):
-        """Envia messages iniciales"""
-        for neighbor in self.neighbors:
-            msg = Message(
-                type="message",
-                from_node=self.name,
-                to_node=neighbor,
-                hops=node.neighbor_costs.get(neighbor)
-            )
-            await self._flood(msg)
+                await self.publish(hello_msg) # mandar un hello a cada vecino
+            
+            print("ENVIADOS hello y message") #DEBUG
 
     # ACTUALIZACION DE TOPOLOGÍA
     async def maintain_topology(self, interval: int = 1):
@@ -239,9 +235,6 @@ class Node:
                         del self.topology_table[self.name][neighbor]
                         self.neighbors.remove(neighbor)
                         del self.neighbor_costs[neighbor]
-                        
-                        # Reenviar messages con información actualizada
-                        await self.send_messages()
 
                 # Recorremos una copia de llaves porque vamos a borrar
                 for node in list(self.topology_table.keys()):
