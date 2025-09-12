@@ -49,8 +49,9 @@ class Node:
 
         # Cliente Redis (async)
         self.r = redis.Redis(
-            host='localhost',
-            port=6379,
+            host='homelab.fortiguate.com',
+            port=16379,
+            password='4YNydkHFPcayvlx7$zpKm',
             decode_responses=True
         )
 
@@ -58,13 +59,13 @@ class Node:
     async def start(self):
         """Suscribe al canal y procesa mensajes (bloqueante)."""
         async with self.r.pubsub() as pubsub:
-            await pubsub.subscribe(f"nodo:{self.name}")
-            print(f"[{self.name}] Suscrito a nodo:{self.name}")
+            await pubsub.subscribe(self.name)
+            print(f"[{self.name}] Suscrito a {self.name}")
 
             # Suscribirse a neighbors para debugging
             for neighbor in self.neighbors:
-                await pubsub.subscribe(f"nodo:{neighbor}")
-                print(f"[{self.name}] Suscrito a nodo:{neighbor}")
+                await pubsub.subscribe(neighbor)
+                print(f"[{self.name}] Suscrito a {neighbor}")
 
             while True:
                 # get_message con timeout corto evita bloqueo indefinido
@@ -88,9 +89,8 @@ class Node:
     async def publish(self, msg: Message, goesTo: str = None) -> int:
         """Publica (async) en el canal nodo:<to_node>. Devuelve número de subscriptores."""
         target = goesTo if goesTo is not None else msg.to_node
-        channel = f"nodo:{target}"
 
-        receivers = await self.r.publish(channel, msg.to_json())
+        receivers = await self.r.publish(target, msg.to_json())
         print(f"[{self.name}] → {msg.to_node}: (subs: {receivers})")
         return receivers
     
@@ -174,8 +174,16 @@ class Node:
 
             # actualizar info
             elif msg.mtype == "message":
+                
+                if msg.to_node not in self.topology_table:
+                    self.topology_table[msg.to_node] = {}
+                if msg.from_node not in self.topology_table[msg.to_node]:
+                    self.topology_table[msg.to_node][msg.from_node] = {
+                        "weight": msg.hops,  # acá usas hops como peso inicial
+                        "time": 15
+                    }
+
                 previous_weight = self.topology_table[msg.to_node][msg.from_node]["weight"]
-                previous_time = self.topology_table[msg.to_node][msg.from_node]["time"]
 
                 if(previous_weight!=msg.hops): # Cambiar y Mandar solamente información nueva
                     self.topology_table[msg.to_node][msg.from_node]["weight"] = msg.hops # update from propagation
