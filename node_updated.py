@@ -1,5 +1,6 @@
 # mata a nodos no vecinos segun timer
 import asyncio
+import traceback
 import redis.asyncio as redis
 import json
 import heapq
@@ -91,7 +92,8 @@ class Node:
         target = goesTo if goesTo is not None else msg.to_node
 
         receivers = await self.r.publish(target, msg.to_json())
-        print(f"[{self.name}] → {msg.to_node}: (subs: {receivers})")
+        if(msg.mtype == "hello"):
+            print(f"[{self.name}] {msg.mtype} → {msg.to_node}: (subs: {receivers})")
         return receivers
     
     # ALGORITMOS DE ENRUTAMIENTO
@@ -104,7 +106,6 @@ class Node:
             if neighbor == msg.from_node:
                 continue
             msg_copy = msg.copy_for_forward(neighbor)
-            print(f"[{self.name}] FLOOD → {neighbor}") #DEBUG
             await self.publish(msg_copy, neighbor)
     
     # Dijkstra cálculo
@@ -190,12 +191,14 @@ class Node:
                     self.topology_table[msg.to_node][msg.from_node]["time"] = 15 # RESET TIMER
                     print(f"Message recibido de {msg.from_node} para {msg.to_node}") #DEBUG
                     
-                await self._flood(Message, msg.from_node) # Flood solamente manda a los vecinos
+                    await self._flood(msg) # Flood solamente manda a los vecinos
                 return
             else:
                 print(f"[{self.name}]  Tipo de mensaje desconocido: {msg.type}")
         except Exception as e:
             print(f"[{self.name}]  Error procesando mensaje: {e}")
+            traceback.print_exc()   # imprime el stack completo
+            
 
     async def update_neighbors(self, interval: int = 3):
         """Envia HELLOs periódicamente cada 3 segundos"""
@@ -235,7 +238,6 @@ class Node:
                 for neighbor in list(self.topology_table[self.name].keys()):
                     entry = self.topology_table[self.name][neighbor]
                     entry["time"] -= 1
-                    print("QUITE VIDA A " + neighbor) #DEBUG
 
                     # Eliminar nodo muerto
                     if entry["time"] <= 0:
