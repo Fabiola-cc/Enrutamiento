@@ -8,6 +8,7 @@ import heapq
 import time
 from typing import List, Dict, Optional
 from collections import defaultdict
+import datetime
 
 from modifiedMessage import Message
 
@@ -111,16 +112,15 @@ class Node:
     
     # Dijkstra cálculo
     def _dijkstra(self):
-        """Calcula distancias mínimas y prev para backtracking sobre self.graph."""
+        """Calcula distancias mínimas y rutas completas sobre self.graph."""
         if not self.graph:
-            self.build_graph_from_topology()
-            return
-            
+            self.graph = self.build_graph_from_topology()
+        
         dist = {n: float("inf") for n in self.graph}
         prev = {n: None for n in self.graph}
         dist[self.name] = 0
         pq = [(0, self.name)]
-        
+
         while pq:
             d, u = heapq.heappop(pq)
             if d > dist[u]:
@@ -132,7 +132,24 @@ class Node:
                     heapq.heappush(pq, (dist[v], v))
 
         self.prev = prev
-        print(f"[{self.name}] Distancias calculadas (prev): {self.prev}")
+        self.dist = dist  # Guardamos los tamaños/distancias
+
+        # Construir rutas completas a cada nodo
+        self.routes = {}
+        for dest in self.graph:
+            if dest == self.name or dist[dest] == float("inf"):
+                continue
+            path = []
+            current = dest
+            while current is not None:
+                path.append(current)
+                current = prev[current]
+            path.reverse()
+            self.routes[dest] = path
+
+        print(f"[{self.name}] Distancias: {self.dist}")
+        print(f"[{self.name}] Rutas completas: {self.routes}")
+
 
     # Dijkstra envío
     async def _route(self, msg: Message):
@@ -192,8 +209,7 @@ class Node:
                     self.topology_table[msg.to_node][msg.from_node]["weight"] = msg.hops # update from propagation
                     self.topology_table[msg.to_node][msg.from_node]["time"] = 15 # RESET TIMER
                 return
-            else:
-                print(f"[{self.name}] de {msg.from_node}  Tipo de mensaje desconocido: {msg.mtype}")
+                
         except Exception as e:
             print(f"[{self.name}]  Error procesando mensaje: {e}")
             traceback.print_exc()   # imprime el stack completo
@@ -278,14 +294,16 @@ class Node:
     # USO DE DIJKSTRA
     def build_graph_from_topology(self):
         """Construye el grafo {u: {v: weight}} a partir de topology_table,
-        ignorando enlaces expirados (time <= 0)."""
+        ignorando enlaces expirados (time <= 0) o sin peso."""
         graph = {}
         for src, neighbors in self.topology_table.items():
             graph[src] = {}
             for dst, data in neighbors.items():
-                if data.get("time", 0) > 0:  # solo enlaces vivos
-                    graph[src][dst] = data["weight"]
+                weight = data.get("weight")
+                if weight is not None and data.get("time", 0) > 0:  # solo enlaces vivos con peso válido
+                    graph[src][dst] = weight
         return graph
+
 
     async def console_input(self):
         """Interfaz de usuario en consola para cambiar modos"""
@@ -317,6 +335,53 @@ class Node:
                 if new_mode == "dijkstra":
                     await self._dijkstra()
 
+async def periodic_dijkstra(node: Node, interval: int = 20, filename="dijkstra_routes.txt"):
+    """Ejecuta Dijkstra cada `interval` segundos y guarda rutas completas en archivo."""
+    while True:
+        try:
+            # Construir grafo actual desde topología viva
+            node.graph = node.build_graph_from_topology()
+            node._dijkstra()  # Calcula rutas completas y distancias
+
+            # Guardar rutas en archivo
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(filename, "a") as f:
+                f.write(f"\n[{timestamp}] Nodo {node.name} rutas completas:\n")
+                for dest, path in node.routes.items():
+                    distance = node.dist.get(dest, float('inf'))
+                    f.write(f"{dest}: {' -> '.join(path)} (dist: {distance})\n")
+
+            print(f"[{node.name}] Dijkstra ejecutado y guardado en {filename}")
+
+        except Exception as e:
+            print(f"[{node.name}] Error en periodic_dijkstra: {e}")
+
+        await asyncio.sleep(interval)
+
+async def periodic_save_topology(node: Node, interval: int = 60, filename="topology_snapshot.json"):
+    """Guarda la topología actual en un archivo cada `interval` segundos."""
+    import json
+    while True:
+        try:
+            # Convertimos defaultdict a dict normal
+            topology_dict = {src: {dst: data for dst, data in neighbors.items()} 
+                             for src, neighbors in node.topology_table.items()}
+
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(filename, "a") as f:
+                f.write(f"\n[{timestamp}] Topología actual:\n")
+                json.dump(topology_dict, f, indent=2)
+                f.write("\n")
+
+            print(f"[{node.name}] Topología guardada en {filename}")
+
+        except Exception as e:
+            print(f"[{node.name}] Error guardando topología: {e}")
+
+        await asyncio.sleep(interval)
+
+
+
 def load_graph_from_file(path="topologia.txt"):
     graph = {}
     with open(path) as f:
@@ -342,6 +407,8 @@ def load_graph_from_file(path="topologia.txt"):
             except Exception as e:
                 print(f"Error parsing edge '{edge}': {e}")
     return graph
+
+
 
 #  CLI PARA LANZAR UN NODO EN SU PROPIO PROCESO 
 if __name__ == "__main__":
@@ -378,7 +445,9 @@ if __name__ == "__main__":
             await asyncio.gather(
                 node.start(), # iniciar conexión 
                 node.update_neighbors(), # mandar señal de vida, cada 3s
-                node.maintain_topology() # revisar vida de cada nodo, cada 1s
+                node.maintain_topology(),
+                periodic_dijkstra(node),
+                periodic_save_topology(node)
             )
         except KeyboardInterrupt:
             print(f"\n[{name}] Terminando...")
