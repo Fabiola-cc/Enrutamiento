@@ -1,5 +1,6 @@
 # mata a nodos no vecinos segun timer
 import asyncio
+import copy
 import traceback
 import redis.asyncio as redis
 import json
@@ -183,18 +184,16 @@ class Node:
                         "weight": msg.hops,  # acá usas hops como peso inicial
                         "time": 15
                     }
+                    print(f"Message recibido de {msg.from_node} para {msg.to_node}") #DEBUG
 
                 previous_weight = self.topology_table[msg.to_node][msg.from_node]["weight"]
 
                 if(previous_weight!=msg.hops): # Cambiar y Mandar solamente información nueva
                     self.topology_table[msg.to_node][msg.from_node]["weight"] = msg.hops # update from propagation
                     self.topology_table[msg.to_node][msg.from_node]["time"] = 15 # RESET TIMER
-                    print(f"Message recibido de {msg.from_node} para {msg.to_node}") #DEBUG
-                    
-                    await self._flood(msg) # Flood solamente manda a los vecinos
                 return
             else:
-                print(f"[{self.name}]  Tipo de mensaje desconocido: {msg.type}")
+                print(f"[{self.name}] de {msg.from_node}  Tipo de mensaje desconocido: {msg.mtype}")
         except Exception as e:
             print(f"[{self.name}]  Error procesando mensaje: {e}")
             traceback.print_exc()   # imprime el stack completo
@@ -205,15 +204,21 @@ class Node:
         while True:
             await asyncio.sleep(interval)
             # Mandar messages con pesos a nuestros vecinos
-            for neighbor in self.neighbors: # crea un mensaje por vecino
-                msg = Message(
-                    type="message",
-                    from_node=self.name,
-                    to_node=neighbor,
-                    hops=node.neighbor_costs.get(neighbor)
-                )
-                await self._flood(msg) # manda cada mensaje a todos los vecinos
+            # Hacer copia profunda de la topología
+            topology_copy = copy.deepcopy(self.topology_table)
 
+            for source, neighbors in topology_copy.items():
+                for destination, data in neighbors.items():
+                    weight = data.get("weight")
+                    msg = Message(
+                        type="message",
+                        from_node=source,       # quién anuncia
+                        to_node=destination,    # hacia quién tiene conexión
+                        hops=weight             # el costo del enlace
+                    )
+                    await self._flood(msg)
+
+            for neighbor in self.neighbors: # crea un mensaje por vecino
                 hello_msg = Message(
                     type="hello",
                     from_node=self.name,
